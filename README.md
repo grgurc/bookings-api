@@ -1,5 +1,5 @@
 ## Requirements
-1. python
+1. python (tested on 3.12)
 2. redis-server
 
 ## How to run
@@ -13,7 +13,7 @@
 ## Request example (replace API key)
 `curl -X GET "localhost:8000/bookings/?date\[gt\]=2024-04-08&currency=USD" -H "x-api-key: api-key-letters-and-numbers"`
 
-## TODO
+## TODO / Improvements
 - caching
 - rate limiting
 - dockerize for 'production'
