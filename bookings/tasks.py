@@ -1,57 +1,64 @@
 import logging
 import requests
 
-from celery import shared_task
-from currency_converter import CurrencyConverter
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# TODO: update rates daily
-cv = CurrencyConverter()
+external_api_url = settings.EXTERNAL_API_URL
+external_api_key = settings.EXTERNAL_API_KEY
 
 
-# TODO: task retry
-@shared_task
-def fetch_bookings(url, params, api_key):
-    try:
-        res = requests.get(url=url, params=params, headers={'x-api-key': api_key})
-        res.raise_for_status()
-    except requests.RequestException:
-        return []
-
-    return res.json().get('results', [])
+def fetch_bookings(params):
+    res = requests.get(url=external_api_url, params=params, headers={'x-api-key': external_api_key})
+    res.raise_for_status()
+    
+    return res.json()
 
 
-@shared_task
-def process_bookings(bookings, requested_currency):
-    processed = []
-    for booking in bookings:
-        original_currency = booking['price']['finalRetailPrice']['currency']
-        original_currency_price = booking['price']['finalRetailPrice']['amount']
-        requested_currency_price = cv.convert(original_currency_price, original_currency, requested_currency)
-
-        res = {
-            'bookingCode': booking['bookingCode'],
-            'experienceName': booking['experience']['name'],
-            'rateName': booking['rateName'],
-            'bookingTime': booking['bookingCreated'],
-            'participants': sum(rate['quantity'] for rate in booking['ratesQuantity']), # since 'participants' field is mostly null
-            'originalCurrency': original_currency,
-            'priceOriginalCurrency': original_currency_price,
-            'requestedCurrency': requested_currency,
-            'priceRequestedCurrency': requested_currency_price,
-        }
-
-        processed.append(res)
-
-    return processed
+def parse_booking(booking):
+    return {
+        'id': booking['id'],
+        'code': booking['bookingCode'],
+        'status': booking['bookingStatus'],
+        'experience': booking['experience']['name'],
+        'rate': booking['rateName'],
+        'bookingCreated': booking['bookingCreated'],
+        'participants': sum(rate['quantity'] for rate in booking['ratesQuantity']),
+        'originalCurrency': booking['price']['finalRetailPrice']['currency'],
+        'priceOriginalCurrency': booking['price']['finalRetailPrice']['amount'],
+    }
 
 
-@shared_task
-def sum_bookings(bookings_lists):
-    bookings_list = [booking for bookings in bookings_lists for booking in bookings]
-    final_res = {'bookings': [booking for booking in bookings_list]}
-    final_res['totalPriceOriginalCurrency'] = sum(booking['priceOriginalCurrency'] for booking in bookings_list)
-    final_res['totalPriceRequestedCurrency'] = sum(booking['priceRequestedCurrency'] for booking in bookings_list)
+def convert_booking(booking, requested_currency, coefficient):
+    original_price = booking['priceOriginalCurrency']
+
+    booking['requestedCurrency'] = requested_currency
+    booking['priceRequestedCurrency'] = original_price * coefficient
+
+    return booking
+
+
+def sum_bookings(bookings_list):
+    final_res = {
+        'bookings': [],
+        'totalPriceOriginalCurrency': 0,
+        'totalPriceRequestedCurrency': 0
+    }
+
+    for booking in bookings_list:
+        final_res['bookings'].append({
+            'code': booking['code'],
+            'experience': booking['experience'],
+            'rate': booking['rate'],
+            'bookingCreated': booking['bookingCreated'],
+            'participants': booking['participants'],
+            'originalCurrency': booking['originalCurrency'],
+            'priceOriginalCurrency': booking['priceOriginalCurrency'],
+            'requestedCurrency': booking['requestedCurrency'],
+            'priceRequestedCurrency': booking['priceRequestedCurrency'],
+        })
+        final_res['totalPriceOriginalCurrency'] += booking['priceOriginalCurrency']
+        final_res['totalPriceRequestedCurrency'] += booking['priceRequestedCurrency']
 
     return final_res

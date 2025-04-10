@@ -15,7 +15,6 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
 env = environ.Env()
 
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
@@ -120,11 +119,6 @@ LOGGING = {
         }
     },
 }
-
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
 
 CACHES = {
     "default": {
