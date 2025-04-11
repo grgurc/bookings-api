@@ -1,4 +1,3 @@
-import re
 import math
 
 from django.conf import settings

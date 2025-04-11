@@ -5,7 +5,7 @@ class Request:
     def __init__(self, params):
         self.requested_currency = params['currency']
         try:
-            # TODO: load from ECB currency file daily using cronjob or sth
+            # TODO: load from ECB currency file that is updated daily
             c = CurrencyConverter()
             self.coefficient = c.convert(1, "EUR", self.requested_currency)
         except RateNotFoundError:
