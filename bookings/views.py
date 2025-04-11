@@ -1,65 +1,82 @@
 import logging
-import json
+from decimal import Decimal, InvalidOperation
+from typing import List, Dict, Any
 
-import bookings.tasks as tasks
-import bookings.utils as utils
-
+from bookings.auth import APIKeyAuthentication
 from bookings.request import Request
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
-from django.core.cache import cache
-from rest_framework import status
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
+from bookings.models import Booking
 
+from rest_framework import status
+from rest_framework.decorators import api_view, authentication_classes
+from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
+
 @api_view(['GET'])
+@authentication_classes([APIKeyAuthentication])
 def fetch(request):
-    try:
-        utils.authenticate(request)
-    except Exception:
-        return Response({'error': 'api key error'}, status=status.HTTP_401_UNAUTHORIZED)
+    logger.info(f"Request: {request.query_params}")
     
     try:
-        req = Request(request.query_params)
-    except Exception as e:
+        req = Request.from_params(request.query_params)
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-    values = []
-    cache_values = cache.get(req.cache_key())
-    if cache_values:
-        values = json.loads(cache_values)
-    
-    if values:
-        if not req.open_ended():
-            converted_responses = [tasks.convert_booking(booking, req.requested_currency, req.coefficient) for booking in values]
-            return Response(tasks.sum_bookings(converted_responses))
-        else:
-            last_time = values[-1]['bookingCreated']
-            req.start_time = datetime.fromisoformat(last_time) + timedelta(seconds=1)
-    else:
-        values = []
-
-    params = req.default_query_params()
+    except Exception as e:
+        logger.error(f"Unexpected error processing request: {str(e)}", exc_info=True)
+        return Response(
+            {'error': 'An unexpected error occurred while processing your request'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
     try:
-        res = tasks.fetch_bookings(params)
-    except Exception:
-        return Response({'error': 'external api error'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        bookings = get_filtered_bookings(req)
+        converted_bookings = [convert_booking(booking, req) for booking in bookings]
+        return Response(sum_bookings(converted_bookings))
+    except Exception as e:
+        logger.error(f"Error processing bookings: {str(e)}", exc_info=True)
+        return Response(
+            {'error': 'An error occurred while processing the bookings'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+def get_filtered_bookings(req: Request) -> List[Booking]:
+    query = Booking.objects.all()
+    if req.start_time:
+        query = query.filter(booking_created__gte=req.start_time)
+    if req.end_time:
+        query = query.filter(booking_created__lte=req.end_time)
+    return list(query)
+
+
+def convert_booking(booking: Booking, req: Request) -> Dict[str, Any]:
+    try:
+        price_converted = (booking.price_original_currency * req.coefficient).quantize(Decimal('0.01'))
+    except (InvalidOperation, ValueError) as e:
+        logger.error(f"Error converting booking {booking.code}: {str(e)}")
+        raise ValueError(f"Invalid currency conversion: {str(e)}")
+        
+    return {
+        'code': booking.code,
+        'experience': booking.experience,
+        'rate': booking.rate,
+        'bookingCreated': booking.booking_created,
+        'participants': booking.participants,
+        'originalCurrency': booking.original_currency,
+        'priceOriginalCurrency': booking.price_original_currency,
+        'requestedCurrency': req.requested_currency,
+        'priceRequestedCurrency': price_converted
+    }
+
+
+def sum_bookings(bookings_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total_original = sum(b['priceOriginalCurrency'] for b in bookings_list)
+    total_converted = sum(b['priceRequestedCurrency'] for b in bookings_list)
     
-    pages_params = utils.generate_params(params, res)
-    
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        responses = list(executor.map(tasks.fetch_bookings, pages_params))
-        bookings_lists = list(executor.map(lambda response: response['results'], responses))
-        flattened_bookings = [booking for booking_list in bookings_lists for booking in booking_list]
-        parsed_responses = list(executor.map(tasks.parse_booking, flattened_bookings))
-
-    values.extend(parsed_responses)
-    cache.set(req.cache_key(), json.dumps(values), 5*60)
-
-    converted_bookings = [tasks.convert_booking(booking, req.requested_currency, req.coefficient) for booking in values]
-
-    return Response(tasks.sum_bookings(converted_bookings))
+    return {
+        'bookings': bookings_list,
+        'totalPriceOriginalCurrency': total_original.quantize(Decimal('0.01')),
+        'totalPriceRequestedCurrency': total_converted.quantize(Decimal('0.01'))
+    }

@@ -120,12 +120,23 @@ LOGGING = {
     },
 }
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://localhost",
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        }
-    }
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost')
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost') 
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULE = {
+    'sync_latest_bookings': {
+        'task': 'bookings.tasks.sync_latest_bookings',
+        'schedule': 3 * 60.0,  # Run every 3 minutes
+    },
+    'sync_all_bookings': {
+        'task': 'bookings.tasks.sync_all_bookings',
+        'schedule': 30 * 60.0,  # Run every 30 minutes
+    },
+    'update_active_bookings': {
+        'task': 'bookings.tasks.update_active_bookings',
+        'schedule': 5 * 60.0,  # Run every 5 minutes
+    },
 }
