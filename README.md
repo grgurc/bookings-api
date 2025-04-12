@@ -19,6 +19,8 @@
 
 `curl -X GET "localhost:8000/bookings/?date\[gt\]=2024-04-08&currency=USD" -H "x-api-key: api-key-letters-and-numbers"`
 - the API only supports dates with `[gt]` and `[lt]` modifiers, not exact dates
+- no date filter is also supported
+- a valid ISO currency must always be provided
 
 ## Further Improvements
 
